@@ -1,15 +1,19 @@
 /**
- * Netlify function: `agent-status`
+ * Netlify function: `get-conversation-url`
  *
- * Returns the current status of an agent-creation job.
- * The frontend polls this endpoint after submitting an arXiv id until the job
- * reaches `ready` or `failed`.
+ * Returns a short-lived signed WebSocket URL that the browser uses to start a
+ * voice conversation with the ElevenLabs Conversational AI agent created for a
+ * given paper.
+ *
+ * The signed URL keeps the ElevenLabs API key server-side and is safe to pass
+ * directly to the `@11labs/react` browser SDK.
  *
  * Query parameters:
  * - `jobId` (required) – UUID returned by `create-agent-background`.
  */
 
 import { getJob } from './lib/agent-store'
+import { getSignedConversationUrl } from './lib/elevenlabs'
 import { handleOptions, json, type FunctionEvent, type FunctionResponse } from './lib/http'
 
 /** Netlify function handler. */
@@ -35,11 +39,16 @@ export async function handler(event: FunctionEvent): Promise<FunctionResponse> {
     return json(404, { error: 'Agent job not found' }, event.headers?.origin)
   }
 
-  return json(200, {
-    jobId: job.id,
-    arxivId: job.arxivId,
-    status: job.status,
-    title: job.title,
-    error: job.error,
-  }, event.headers?.origin)
+  if (job.status !== 'ready' || !job.agentId) {
+    return json(409, { error: 'Agent is not ready yet' }, event.headers?.origin)
+  }
+
+  try {
+    const signedUrl = await getSignedConversationUrl(job.agentId)
+    return json(200, { signedUrl }, event.headers?.origin)
+  } catch (error) {
+    return json(500, {
+      error: error instanceof Error ? error.message : 'Unable to get conversation URL',
+    }, event.headers?.origin)
+  }
 }

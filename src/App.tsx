@@ -1,13 +1,9 @@
+import { useConversation } from '@11labs/react'
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 
 type AgentStatus = 'idle' | 'queued' | 'processing' | 'ready' | 'failed'
-
-type Message = {
-  role: 'user' | 'assistant'
-  text: string
-}
 
 type CreateAgentResponse = {
   jobId: string
@@ -46,13 +42,17 @@ function App() {
   const [status, setStatus] = useState<AgentStatus>('idle')
   const [statusMessage, setStatusMessage] = useState('')
   const [paperTitle, setPaperTitle] = useState('')
-  const [micEnabled, setMicEnabled] = useState(false)
-  const [chatInput, setChatInput] = useState('')
-  const [messages, setMessages] = useState<Message[]>([])
   const [isSubmittingPaper, setIsSubmittingPaper] = useState(false)
-  const [isSendingMessage, setIsSendingMessage] = useState(false)
 
-  const canChat = status === 'ready' && micEnabled && Boolean(jobId)
+  // ElevenLabs Conversational AI hook
+  const conversation = useConversation({
+    onError: (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error)
+      setStatusMessage(message)
+    },
+  })
+
+  const isConversationActive = conversation.status === 'connected'
 
   const statusLabel = useMemo(() => {
     if (status === 'idle') {
@@ -64,7 +64,10 @@ function App() {
     }
 
     if (status === 'ready') {
-      return paperTitle ? `Agent ready for: ${paperTitle}` : 'Agent is ready. Enable microphone to chat.'
+      if (paperTitle) {
+        return `Agent ready for: ${paperTitle}`
+      }
+      return 'Agent is ready. Start a voice conversation to ask about the paper.'
     }
 
     return 'Agent is being prepared. Polling for completion...'
@@ -108,11 +111,15 @@ function App() {
       return
     }
 
+    // End any active conversation before creating a new agent
+    if (isConversationActive) {
+      await conversation.endSession()
+    }
+
     setIsSubmittingPaper(true)
     setStatus('queued')
     setStatusMessage('')
-    setMicEnabled(false)
-    setMessages([])
+    setPaperTitle('')
 
     try {
       const response = await requestJson<CreateAgentResponse>('/.netlify/functions/create-agent-background', {
@@ -133,63 +140,28 @@ function App() {
     }
   }
 
-  async function enableMicrophone(): Promise<void> {
+  async function startConversation(): Promise<void> {
+    setStatusMessage('')
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      stream.getTracks().forEach((track) => track.stop())
-      setMicEnabled(true)
-      setStatusMessage('')
-    } catch (error) {
-      setMicEnabled(false)
-      setStatusMessage(error instanceof Error ? error.message : 'Microphone permission denied')
-    }
-  }
-
-  async function sendMessage(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault()
-
-    if (!canChat || !chatInput.trim()) {
+      await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch {
+      setStatusMessage('Microphone permission denied. Please allow microphone access and try again.')
       return
     }
 
-    const outgoing = chatInput.trim()
-    setChatInput('')
-    setIsSendingMessage(true)
-    setMessages((current) => [...current, { role: 'user', text: outgoing }])
-
     try {
-      const response = await requestJson<{ reply: string }>('/.netlify/functions/agent-chat', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          jobId,
-          message: outgoing,
-        }),
-      })
-
-      setMessages((current) => [...current, { role: 'assistant', text: response.reply }])
+      const { signedUrl } = await requestJson<{ signedUrl: string }>(
+        `/.netlify/functions/get-conversation-url?jobId=${encodeURIComponent(jobId)}`,
+      )
+      await conversation.startSession({ signedUrl })
     } catch (error) {
-      const failureText =
-        error instanceof ApiError && error.status === 404
-          ? 'Agent session was not found. Please resubmit the arXiv id.'
-          : error instanceof ApiError && error.status === 409
-            ? 'Agent is still preparing. Please wait for ready status and retry.'
-            : error instanceof Error
-              ? error.message
-              : 'Failed to fetch response from agent'
-
-      setMessages((current) => [
-        ...current,
-        {
-          role: 'assistant',
-          text: failureText,
-        },
-      ])
-    } finally {
-      setIsSendingMessage(false)
+      setStatusMessage(error instanceof Error ? error.message : 'Failed to start conversation')
     }
+  }
+
+  async function stopConversation(): Promise<void> {
+    await conversation.endSession()
   }
 
   return (
@@ -217,35 +189,28 @@ function App() {
       <section className="card">
         <div className="row">
           <h2>Voice chat</h2>
-          <button type="button" onClick={enableMicrophone} disabled={status !== 'ready' || micEnabled}>
-            {micEnabled ? 'Microphone enabled' : 'Enable microphone'}
-          </button>
-        </div>
-
-        <div className="chat-log" aria-live="polite">
-          {messages.length === 0 ? (
-            <p className="empty">No messages yet.</p>
+          {isConversationActive ? (
+            <button type="button" onClick={stopConversation}>
+              {conversation.isSpeaking ? 'Agent is speaking…' : 'Stop conversation'}
+            </button>
           ) : (
-            messages.map((message, index) => (
-              <article key={`${message.role}-${index}`} className={`bubble ${message.role}`}>
-                <strong>{message.role === 'user' ? 'You' : 'Agent'}</strong>
-                <span>{message.text}</span>
-              </article>
-            ))
+            <button type="button" onClick={startConversation} disabled={status !== 'ready'}>
+              Start conversation
+            </button>
           )}
         </div>
 
-        <form className="row" onSubmit={sendMessage}>
-          <input
-            placeholder={canChat ? 'Ask about the paper...' : 'Wait for agent and microphone'}
-            value={chatInput}
-            disabled={!canChat || isSendingMessage}
-            onChange={(event) => setChatInput(event.target.value)}
-          />
-          <button type="submit" disabled={!canChat || isSendingMessage || !chatInput.trim()}>
-            {isSendingMessage ? 'Sending...' : 'Send'}
-          </button>
-        </form>
+        {statusMessage && <p className="status status-failed">{statusMessage}</p>}
+
+        <p className="empty">
+          {isConversationActive
+            ? conversation.isSpeaking
+              ? 'The agent is speaking…'
+              : 'Listening — speak to ask about the paper.'
+            : status === 'ready'
+              ? 'Click "Start conversation" and speak to ask about the paper.'
+              : 'Wait for the agent to be ready, then start a voice conversation.'}
+        </p>
       </section>
     </main>
   )
