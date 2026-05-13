@@ -20,12 +20,21 @@ type AgentStatusResponse = {
   error?: string
 }
 
+class ApiError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init)
   const payload = (await response.json().catch(() => ({}))) as Record<string, string>
 
   if (!response.ok) {
-    throw new Error(payload.error ?? `Request failed (${response.status})`)
+    throw new ApiError(response.status, payload.error ?? `Request failed (${response.status})`)
   }
 
   return payload as T
@@ -162,11 +171,20 @@ function App() {
 
       setMessages((current) => [...current, { role: 'assistant', text: response.reply }])
     } catch (error) {
+      const failureText =
+        error instanceof ApiError && error.status === 404
+          ? 'Agent session was not found. Please resubmit the arXiv id.'
+          : error instanceof ApiError && error.status === 409
+            ? 'Agent is still preparing. Please wait for ready status and retry.'
+            : error instanceof Error
+              ? error.message
+              : 'Failed to fetch response from agent'
+
       setMessages((current) => [
         ...current,
         {
           role: 'assistant',
-          text: error instanceof Error ? error.message : 'Failed to fetch response from agent',
+          text: failureText,
         },
       ])
     } finally {

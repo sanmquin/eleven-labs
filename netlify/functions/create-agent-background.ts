@@ -27,20 +27,20 @@ async function processJob(jobId: string, arxivId: string): Promise<void> {
 }
 
 export async function handler(event: FunctionEvent): Promise<FunctionResponse> {
-  const optionsResponse = handleOptions(event.httpMethod)
+  const optionsResponse = handleOptions(event)
   if (optionsResponse) {
     return optionsResponse
   }
 
   if (event.httpMethod !== 'POST') {
-    return json(405, { error: 'Method not allowed' })
+    return json(405, { error: 'Method not allowed' }, event.headers?.origin)
   }
 
   const payload = event.body ? (JSON.parse(event.body) as { arxivId?: string }) : {}
   const arxivId = normalizeArxivId(payload.arxivId ?? '')
 
   if (!isValidArxivId(arxivId)) {
-    return json(400, { error: 'Please provide a valid arXiv id' })
+    return json(400, { error: 'Please provide a valid arXiv id' }, event.headers?.origin)
   }
 
   const job = createJob(arxivId)
@@ -50,5 +50,5 @@ export async function handler(event: FunctionEvent): Promise<FunctionResponse> {
   return json(202, {
     jobId: job.id,
     status: job.status,
-  })
+  }, event.headers?.origin)
 }

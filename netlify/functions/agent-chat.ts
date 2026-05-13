@@ -8,13 +8,13 @@ interface ChatPayload {
 }
 
 export async function handler(event: FunctionEvent): Promise<FunctionResponse> {
-  const optionsResponse = handleOptions(event.httpMethod)
+  const optionsResponse = handleOptions(event)
   if (optionsResponse) {
     return optionsResponse
   }
 
   if (event.httpMethod !== 'POST') {
-    return json(405, { error: 'Method not allowed' })
+    return json(405, { error: 'Method not allowed' }, event.headers?.origin)
   }
 
   const payload = event.body ? (JSON.parse(event.body) as ChatPayload) : {}
@@ -22,17 +22,17 @@ export async function handler(event: FunctionEvent): Promise<FunctionResponse> {
   const message = payload.message?.trim()
 
   if (!jobId || !message) {
-    return json(400, { error: 'jobId and message are required' })
+    return json(400, { error: 'jobId and message are required' }, event.headers?.origin)
   }
 
   const job = getJob(jobId)
 
   if (!job) {
-    return json(404, { error: 'Agent job not found' })
+    return json(404, { error: 'Agent job not found' }, event.headers?.origin)
   }
 
   if (job.status !== 'ready' || !job.instructions || !job.fileUri || !job.abstract) {
-    return json(409, { error: 'Agent is not ready yet' })
+    return json(409, { error: 'Agent is not ready yet' }, event.headers?.origin)
   }
 
   appendChat(job.id, { role: 'user', text: message })
@@ -48,10 +48,10 @@ export async function handler(event: FunctionEvent): Promise<FunctionResponse> {
 
     appendChat(job.id, { role: 'assistant', text: answer })
 
-    return json(200, { reply: answer })
+    return json(200, { reply: answer }, event.headers?.origin)
   } catch (error) {
     return json(500, {
       error: error instanceof Error ? error.message : 'Unable to chat with the agent',
-    })
+    }, event.headers?.origin)
   }
 }

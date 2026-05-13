@@ -12,6 +12,7 @@ Set the following variables for Netlify Functions:
 
 - `GEMINI_API_KEY` (required)
 - `GEMINI_MODEL` (optional, defaults to `gemini-2.0-flash`)
+- `CORS_ALLOWED_ORIGINS` (optional, comma-separated allowed origins; defaults to local Netlify/Vite origins)
 
 ## Local development
 

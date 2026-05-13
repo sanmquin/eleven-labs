@@ -33,12 +33,15 @@ function extractTag(xml: string, tag: string): string {
 }
 
 function decodeXmlEntities(value: string): string {
-  return value
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  const entities: Record<string, string> = {
+    '&lt;': '<',
+    '&gt;': '>',
+    '&amp;': '&',
+    '&quot;': '"',
+    '&#39;': "'",
+  }
+
+  return value.replace(/&(lt|gt|amp|quot|#39);/g, (entity) => entities[entity] ?? entity)
 }
 
 export async function fetchArxivPaper(arxivId: string): Promise<ArxivPaper> {
